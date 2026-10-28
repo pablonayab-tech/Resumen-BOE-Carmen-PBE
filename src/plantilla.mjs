@@ -176,7 +176,7 @@ export function maquetar({ parsed, meta, fechaBoe, emergencia = false }) {
   if (cuenta.deroga) pdf += '<span class="stat"><b>' + cuenta.deroga + '</b> derogan</span>';
   if (cuenta.anade) pdf += '<span class="stat"><b>' + cuenta.anade + '</b> añaden</span>';
   pdf += '</div></div>';
-  if (emergencia) pdf += '<div class="nota" style="font-size:12px;margin:0 0 16px">Aviso: hoy los modelos principales de Gemini estaban saturados y este desarrollo lo ha preparado el modelo de emergencia, que es menos fino. Puede que se le haya escapado alguna norma o algún detalle: conviene revisar el sumario del BOE del día.</div>';
+  if (emergencia) pdf += '<div class="nota" style="font-size:12px;margin:0 0 16px">Aviso: hoy los modelos principales de Gemini no estaban disponibles (saturados o sin cupo) y este desarrollo lo ha preparado el modelo de emergencia, que es menos fino. Puede que se le haya escapado alguna norma o algún detalle: conviene revisar el sumario del BOE del día.</div>';
 
   if (!n) {
     pdf += '<div class="vacio">Hoy el BOE no contiene novedades que afecten al temario.</div>';

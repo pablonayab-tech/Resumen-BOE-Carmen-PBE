@@ -68,6 +68,7 @@ class SoloEmergencia extends Error {}
 
 async function gemini(body, etapa, timeoutSegundos = cfg.timeoutGeminiSegundos) {
   const errores = [];
+  const sinCupo = new Set(); // modelos que han dicho "cupo diario agotado" (429)
   for (const modelo of cfg.modelos) {
     for (let i = 1; i <= cfg.intentosPorModelo; i++) {
       try {
@@ -81,6 +82,7 @@ async function gemini(body, etapa, timeoutSegundos = cfg.timeoutGeminiSegundos) 
         if (!r.ok) {
           errores.push(modelo + ' (intento ' + i + '): HTTP ' + r.status);
           log(etapa + ' · ' + modelo + ' intento ' + i + ' → HTTP ' + r.status);
+          if (r.status === 429) sinCupo.add(modelo);
           if (r.status === 429 || r.status === 404 || r.status === 400) break; // cupo agotado o modelo no válido: siguiente modelo
         } else {
           const resp = JSON.parse(txt);
@@ -90,7 +92,9 @@ async function gemini(body, etapa, timeoutSegundos = cfg.timeoutGeminiSegundos) 
           const parsed = JSON.parse(text);
           log(etapa + ' · respondió ' + modelo + ' (intento ' + i + ')');
           nota(etapa + ': respondió ' + modelo + (errores.length ? ' (antes fallaron: ' + errores.join('; ') + ')' : ''));
-          return { parsed, modelo };
+          // soloCupo: los modelos principales no respondieron por cupo agotado (no se recupera hasta las 9:00)
+          const soloCupo = modelo === EMERGENCIA && cfg.modelos.filter((m) => m !== EMERGENCIA).every((m) => sinCupo.has(m));
+          return { parsed, modelo, soloCupo };
         }
       } catch (e) {
         errores.push(modelo + ' (intento ' + i + '): ' + (e.name === 'TimeoutError' ? 'sin respuesta (timeout)' : e.message));
@@ -274,7 +278,7 @@ async function avisarError(mensaje, fecha) {
 
 function avisoModeloEmergencia(sumarioUrl) {
   return '<div style="font-family:Arial,Helvetica,sans-serif;max-width:720px;margin:0 auto 10px;background:#fff4e0;border:1px solid #f2c27a;color:#6b4300;border-radius:8px;padding:10px 14px;font-size:14px;line-height:1.45">' +
-    '<b>Aviso:</b> hoy los modelos principales de Gemini estaban saturados y este resumen lo ha preparado el modelo de emergencia, que es menos fino. ' +
+    '<b>Aviso:</b> hoy los modelos principales de Gemini no estaban disponibles (saturados o sin cupo) y este resumen lo ha preparado el modelo de emergencia, que es menos fino. ' +
     'Puede que se le haya escapado alguna norma: conviene echar un vistazo al <a href="' + sumarioUrl + '" style="color:#6b4300;font-weight:bold">sumario del BOE de hoy</a>.</div>';
 }
 
@@ -297,7 +301,8 @@ async function procesar({ fecha, destinatario, aceptarEmergencia = true }) {
   let emergencia = false;
   const comprobarModelo = (r, etapa) => {
     if (r.modelo !== EMERGENCIA) return;
-    if (!aceptarEmergencia) throw new SoloEmergencia('La ' + etapa + ' solo la ha podido hacer el modelo de emergencia (' + EMERGENCIA + ')');
+    // Si es por cupo agotado, esperar no sirve (el cupo se renueva a las 9:00): se acepta ya
+    if (!aceptarEmergencia && !r.soloCupo) throw new SoloEmergencia('La ' + etapa + ' solo la ha podido hacer el modelo de emergencia (' + EMERGENCIA + ')');
     emergencia = true;
   };
 
