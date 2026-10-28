@@ -20,14 +20,14 @@ const cfg = JSON.parse(fs.readFileSync(path.join(RAIZ, 'config.json'), 'utf8'));
 cfg.temario = fs.readFileSync(path.join(RAIZ, 'temario.txt'), 'utf8');
 // Los correos vienen de los secretos de GitHub, para que no estén a la vista en el repositorio
 cfg.emailDestino = (process.env.EMAIL_CARMEN || '').trim();
-cfg.emailPrueba = cfg.emailAvisos = (process.env.EMAIL_PABLO || '').trim();
-for (const s of ['EMAIL_CARMEN', 'EMAIL_PABLO']) {
-  if (!(process.env[s] || '').trim()) {
-    const msg = 'Falta el secreto ' + s + ' (Settings → Secrets and variables → Actions)';
-    if (process.env.GITHUB_ACTIONS) console.log('::error::' + msg);
-    throw new Error(msg);
-  }
+if (!cfg.emailDestino) {
+  const msg = 'Falta el secreto EMAIL_CARMEN (Settings → Secrets and variables → Actions)';
+  if (process.env.GITHUB_ACTIONS) console.log('::error::' + msg);
+  throw new Error(msg);
 }
+// Si falta EMAIL_PABLO, las pruebas y los avisos van al propio Gmail que envía, para no bloquear el envío a Carmen
+cfg.emailPrueba = cfg.emailAvisos = (process.env.EMAIL_PABLO || '').trim() || (process.env.GMAIL_USER || '').trim();
+if (!(process.env.EMAIL_PABLO || '').trim() && process.env.GITHUB_ACTIONS) console.log('::warning::Falta el secreto EMAIL_PABLO: las pruebas y los avisos de error van al Gmail que envía');
 const quien = (to) => (to === cfg.emailDestino ? 'Carmen' : 'Pablo');
 const ESTADO = path.join(RAIZ, 'estado', 'ultimo_envio.txt');
 const LF = '\n';
