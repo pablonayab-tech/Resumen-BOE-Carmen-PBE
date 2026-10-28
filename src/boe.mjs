@@ -62,7 +62,11 @@ async function pedir(url, opciones = {}, { intentos = 3, espera = 5000, timeout 
 }
 
 // ---------- Gemini con cadena de modelos de respaldo ----------
-async function gemini(body, etapa) {
+// El último modelo de la cadena (Flash-Lite) es el "de emergencia": funciona, pero es menos fino.
+const EMERGENCIA = cfg.modeloEmergencia || cfg.modelos[cfg.modelos.length - 1];
+class SoloEmergencia extends Error {}
+
+async function gemini(body, etapa, timeoutSegundos = cfg.timeoutGeminiSegundos) {
   const errores = [];
   for (const modelo of cfg.modelos) {
     for (let i = 1; i <= cfg.intentosPorModelo; i++) {
@@ -71,7 +75,7 @@ async function gemini(body, etapa) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(cfg.timeoutGeminiSegundos * 1000),
+          signal: AbortSignal.timeout(timeoutSegundos * 1000),
         });
         const txt = await r.text();
         if (!r.ok) {
@@ -268,6 +272,12 @@ async function avisarError(mensaje, fecha) {
   } catch (e) { log('No se pudo enviar el aviso de error: ' + e.message); }
 }
 
+function avisoModeloEmergencia(sumarioUrl) {
+  return '<div style="font-family:Arial,Helvetica,sans-serif;max-width:720px;margin:0 auto 10px;background:#fff4e0;border:1px solid #f2c27a;color:#6b4300;border-radius:8px;padding:10px 14px;font-size:14px;line-height:1.45">' +
+    '<b>Aviso:</b> hoy los modelos principales de Gemini estaban saturados y este resumen lo ha preparado el modelo de emergencia, que es menos fino. ' +
+    'Puede que se le haya escapado alguna norma: conviene echar un vistazo al <a href="' + sumarioUrl + '" style="color:#6b4300;font-weight:bold">sumario del BOE de hoy</a>.</div>';
+}
+
 // ---------- Programa principal ----------
 function marcarDia(fecha, programada, modoPrueba) {
   if (!programada || modoPrueba) return;
@@ -275,7 +285,7 @@ function marcarDia(fecha, programada, modoPrueba) {
   fs.writeFileSync(ESTADO, fecha + LF);
 }
 
-async function procesar({ fecha, destinatario }) {
+async function procesar({ fecha, destinatario, aceptarEmergencia = true }) {
   const sumario = await descargarSumario(fecha);
   if (!sumario) return 'sin-boe';
   const rows = extraerCandidatas(sumario);
@@ -283,9 +293,18 @@ async function procesar({ fecha, destinatario }) {
   nota('BOE ' + fecha + ': ' + rows.length + ' disposiciones candidatas');
   const fechaTxt = fecha.slice(6, 8) + '/' + fecha.slice(4, 6) + '/' + fecha.slice(0, 4);
 
+  // Si una etapa solo la ha podido hacer el modelo de emergencia y aún hay tiempo, mejor reintentar luego
+  let emergencia = false;
+  const comprobarModelo = (r, etapa) => {
+    if (r.modelo !== EMERGENCIA) return;
+    if (!aceptarEmergencia) throw new SoloEmergencia('La ' + etapa + ' solo la ha podido hacer el modelo de emergencia (' + EMERGENCIA + ')');
+    emergencia = true;
+  };
+
   let relevantes = [];
   if (rows.length) {
     const pre = await gemini(cuerpoPreseleccion(rows), 'preselección');
+    comprobarModelo(pre, 'preselección');
     relevantes = procesarPreseleccion(pre.parsed, rows);
   }
   log(relevantes.length + ' normas preseleccionadas: ' + relevantes.map((r) => r.id).join(', '));
@@ -301,16 +320,20 @@ async function procesar({ fecha, destinatario }) {
     }
     if (!docs.length) throw new Error('No se pudo leer ningún XML de las disposiciones preseleccionadas');
     await esperar((Number(cfg.esperaSegundos) || 6) * 1000);
-    const an = await gemini(cuerpoAnalisis(docs), 'análisis');
+    const an = await gemini(cuerpoAnalisis(docs), 'análisis', cfg.timeoutAnalisisSegundos || cfg.timeoutGeminiSegundos);
+    comprobarModelo(an, 'análisis');
     const meta = docs.map((d) => ({ id: d.id, url: d.url, titulo: d.titulo, rango: d.rango, numero: d.numero, fechaVigencia: d.fechaVigencia, recortado: d.recortado }));
-    maq = maquetar({ parsed: an.parsed, meta, fechaBoe: fecha });
+    maq = maquetar({ parsed: an.parsed, meta, fechaBoe: fecha, emergencia });
   }
+  const sumarioUrl = 'https://www.boe.es/boe/dias/' + fecha.slice(0, 4) + '/' + fecha.slice(4, 6) + '/' + fecha.slice(6, 8) + '/';
+  const avisoEmergencia = emergencia ? avisoModeloEmergencia(sumarioUrl) : '';
+  if (emergencia) nota('Se envía con el aviso de modelo de emergencia', 'warning');
 
   if (!maq || !maq.count) {
     await enviar({
       to: destinatario,
       subject: 'BOE ' + fechaTxt + ' – 0 novedades del temario',
-      html: '<div style="font-family:Arial,Helvetica,sans-serif;max-width:720px;margin:auto"><h2>BOE ' + fechaTxt + ' – 0 novedades del temario</h2><p>Hoy el BOE no contiene disposiciones que afecten al temario de Abogados del Estado.</p></div>',
+      html: '<div style="font-family:Arial,Helvetica,sans-serif;max-width:720px;margin:auto">' + avisoEmergencia + '<h2>BOE ' + fechaTxt + ' – 0 novedades del temario</h2><p>Hoy el BOE no contiene disposiciones que afecten al temario de Abogados del Estado.</p></div>',
     });
   } else {
     const fechaIso = fecha.slice(0, 4) + '-' + fecha.slice(4, 6) + '-' + fecha.slice(6, 8);
@@ -323,7 +346,7 @@ async function procesar({ fecha, destinatario }) {
       adjunto = { filename: 'Desarrollo-BOE-' + fechaIso + '.html', content: maq.pdfHtml, contentType: 'text/html' };
       avisoPdf = '<p style="background:#fff3cd;padding:6px;font-family:Arial">Aviso: no se pudo generar el PDF; se adjunta el desarrollo en HTML (ábrelo en el navegador).</p>';
     }
-    await enviar({ to: destinatario, subject: maq.subject, html: avisoPdf + maq.emailHtml, attachments: [adjunto] });
+    await enviar({ to: destinatario, subject: maq.subject, html: avisoPdf + avisoEmergencia + maq.emailHtml, attachments: [adjunto] });
   }
   return 'enviado';
 }
@@ -362,13 +385,25 @@ export async function main() {
   }
 
   let ultimoError = null;
+  let yaEsperoEmergencia = false;
   for (let intento = 1; ; intento++) {
     try {
-      const r = await procesar({ fecha, destinatario });
+      // El modelo de emergencia se acepta si ya se esperó una vez o si es tarde (horaAceptarEmergencia)
+      const aceptarEmergencia = yaEsperoEmergencia || ahoraMadrid().minutos >= aMinutos(cfg.horaAceptarEmergencia || '08:45');
+      const r = await procesar({ fecha, destinatario, aceptarEmergencia });
       if (r === 'enviado') { marcarDia(fecha, programada, modoPrueba); log('Terminado correctamente.'); return; }
       ultimoError = new Error('El BOE de hoy no está publicado todavía en la API oficial (404).');
       log('El BOE de ' + fecha + ' aún no está publicado (404).');
     } catch (e) {
+      if (e instanceof SoloEmergencia) {
+        yaEsperoEmergencia = true;
+        const hasta = aMinutos(cfg.horaAceptarEmergencia || '08:45') - ahoraMadrid().minutos;
+        const min = Math.max(0, Math.min(Number(cfg.minutosEsperaEmergencia) || 10, hasta));
+        nota(e.message + '. Se reintenta con los modelos principales en ' + min + ' min', 'warning');
+        log(e.message + '. Reintento en ' + min + ' min.');
+        await esperar(min * 60000);
+        continue;
+      }
       ultimoError = e;
       log('ERROR (intento ' + intento + '): ' + (e.stack || e.message));
     }

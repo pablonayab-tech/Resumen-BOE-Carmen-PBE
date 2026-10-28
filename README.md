@@ -13,6 +13,9 @@ Se ejecuta solo en GitHub Actions (no hace falta tener ningún ordenador encendi
 | `maxNormas` | Máximo de normas analizadas al día |
 | `horaEnvio` | Hora de Madrid a la que empieza a preparar el resumen (llega unos minutos después) |
 | `horaLimite` | Hasta qué hora reintenta si el BOE no está publicado o Gemini falla |
+| `modeloEmergencia` | Modelo más sencillo, último de la cadena. Si solo responde él, se espera `minutosEsperaEmergencia` y se reintenta con los buenos |
+| `horaAceptarEmergencia` | A partir de esta hora ya no se espera: se envía lo del modelo de emergencia, con un aviso en el email |
+| `timeoutGeminiSegundos` / `timeoutAnalisisSegundos` | Cuánto se espera a cada modelo antes de pasar al siguiente (preselección / análisis) |
 
 El temario está en `temario.txt`.
 

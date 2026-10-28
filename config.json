@@ -7,12 +7,16 @@
     "gemini-3.5-flash-lite"
   ],
   "intentosPorModelo": 2,
+  "modeloEmergencia": "gemini-3.5-flash-lite",
   "timeoutGeminiSegundos": 60,
+  "timeoutAnalisisSegundos": 120,
   "maxNormas": 12,
   "maxCaracteresTexto": 15000,
   "esperaSegundos": 6,
   "horaMinima": "07:30",
   "horaEnvio": "08:25",
   "horaLimite": "09:30",
+  "horaAceptarEmergencia": "08:45",
+  "minutosEsperaEmergencia": 10,
   "minutosEntreReintentos": 5
 }

@@ -4,6 +4,6 @@
   "type": "module",
   "description": "Resumen diario del BOE para el temario de Abogados del Estado",
   "dependencies": {
-    "nodemailer": ">=6.9.16 <8"
+    "nodemailer": "7.0.13"
   }
 }
