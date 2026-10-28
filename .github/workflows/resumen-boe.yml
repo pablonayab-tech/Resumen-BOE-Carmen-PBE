@@ -1,0 +1,71 @@
+name: Resumen diario del BOE
+
+on:
+  # GitHub usa hora UTC y suele lanzar las tareas programadas con 15-60 min de retraso.
+  # Por eso se lanza varias veces temprano; la primera que arranca espera hasta las 8:25
+  # (hora de Madrid) y envía hacia las 8:30. Las demás ven que ya se envió y terminan.
+  schedule:
+    - cron: '45 5 * * 1-6'
+    - cron: '15 6 * * 1-6'
+    - cron: '45 6 * * 1-6'
+    - cron: '15 7 * * 1-6'
+  # Botón "Run workflow" para hacer pruebas a mano
+  workflow_dispatch:
+    inputs:
+      fecha:
+        description: 'Fecha del BOE (AAAAMMDD). Vacío = hoy'
+        required: false
+        default: ''
+      modo_prueba:
+        description: 'Enviar solo a Pablo (prueba)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: resumen-boe
+  cancel-in-progress: false
+
+jobs:
+  resumen:
+    runs-on: ubuntu-24.04   # versión fija, para que no cambie sola
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main   # siempre la última versión (incluye si hoy ya se envió)
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Instalar dependencias
+        run: npm install --no-audit --no-fund
+
+      - name: Preparar y enviar el resumen
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_CARMEN: ${{ secrets.EMAIL_CARMEN }}
+          EMAIL_PABLO: ${{ secrets.EMAIL_PABLO }}
+          EJECUCION_PROGRAMADA: ${{ github.event_name == 'schedule' }}
+          FECHA: ${{ inputs.fecha }}
+          MODO_PRUEBA: ${{ github.event_name == 'workflow_dispatch' && inputs.modo_prueba || 'false' }}
+        run: node src/boe.mjs
+
+      - name: Guardar que hoy ya se envió
+        if: always() && github.event_name == 'schedule'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add estado/ultimo_envio.txt
+          if git diff --cached --quiet; then
+            echo "Sin cambios"
+          else
+            git commit -m "Resumen BOE enviado: $(cat estado/ultimo_envio.txt)"
+            git pull --rebase
+            git push
+          fi

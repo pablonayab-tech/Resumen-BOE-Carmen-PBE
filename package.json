@@ -1,0 +1,9 @@
+{
+  "name": "resumen-boe",
+  "private": true,
+  "type": "module",
+  "description": "Resumen diario del BOE para el temario de Abogados del Estado",
+  "dependencies": {
+    "nodemailer": ">=6.9.16 <8"
+  }
+}
