@@ -152,7 +152,7 @@ function cuerpoPreseleccion(rows) {
   const listado = rows.map((r) => r.id + ' | Sección ' + r.seccion + ' | ' + r.departamento + ' | ' + r.titulo).join(LF);
   const prompt = 'TEMARIO OFICIAL (Abogados del Estado):' + LF + cfg.temario + LF + LF +
     'DISPOSICIONES PUBLICADAS HOY EN EL BOE (id | sección | departamento | título):' + LF + listado + LF + LF +
-    'TAREA: PRESELECCIONA solo las disposiciones cuyo TÍTULO indique que crean, modifican, derogan o desarrollan normativa comprendida en algún tema del temario. Prioriza la Sección I (disposiciones generales). Ignora nombramientos, ceses, oposiciones, becas, subvenciones, convenios menores, anuncios y normativa sectorial ajena al programa. Ante duda razonable, inclúyela solo si el título sugiere un cambio normativo con impacto en el temario. Devuelve como máximo ' + cfg.maxNormas + ' ids, ordenados de más a menos importante, copiados EXACTAMENTE de la lista. No inventes ids. Si ninguna es relevante, devuelve una lista vacía.';
+    'TAREA: PRESELECCIONA solo las disposiciones cuyo TÍTULO indique que crean, modifican, derogan o desarrollan normativa comprendida en algún tema del temario. Prioriza la Sección I (disposiciones generales). Ignora nombramientos, ceses, oposiciones, becas, subvenciones, convenios, anuncios, correcciones de errores, órdenes y resoluciones de mera gestión, normativa autonómica o sectorial y todo lo que solo roce un epígrafe del temario. Incluye los cambios normativos reales que toquen un tema del temario, aunque sean menores (luego se clasificarán por importancia), pero no el ruido administrativo. Devuelve como máximo ' + cfg.maxNormas + ' ids, ordenados de más a menos importante, copiados EXACTAMENTE de la lista. No inventes ids. Si ninguna es relevante, devuelve una lista vacía.';
   return {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
@@ -218,12 +218,13 @@ export function cuerpoAnalisis(docs) {
   const prompt = 'TEMARIO OFICIAL (Abogados del Estado):' + LF + cfg.temario + LF + LF + 'NORMAS PUBLICADAS HOY PARA ANALIZAR (datos oficiales del BOE):' + LF + bloque +
     'INSTRUCCIONES:' + LF +
     '- Usa EXCLUSIVAMENTE los datos anteriores. No inventes artículos, números, fechas ni redacciones. Si algo no se puede determinar, escribe "no consta".' + LF +
-    '- afectaTemario=true solo si la norma crea, modifica, deroga o actualiza contenido que encaja de verdad en algún tema concreto del temario. Si no, false.' + LF +
+    '- afectaTemario=true si la norma crea, modifica, deroga o actualiza contenido que encaja de verdad en algún tema concreto del temario, aunque el cambio sea menor. Si no, false.' + LF +
+    '- CRITERIO DE IMPORTANCIA: la opositora dispone de unos 13 minutos para exponer cada tema en el examen. Un cambio es SUSTANCIAL (importancia 3 o más) solo si merecería mencionarse en esa exposición: nueva ley o reforma de su núcleo, cambio de plazos, requisitos, órganos competentes, régimen jurídico o principios que se estudian. Que encaje en un epígrafe NO basta. Desarrollos técnicos o de detalle, cambios formales, cuantías o aspectos sectoriales son MENORES (1 o 2). Ante la duda, menor.' + LF +
     '- tema: formato "Materia – Tema N: título" tomado del temario (ej. "Civil – Tema 55: Arrendamientos urbanos (I)"). Si afecta a varios, sepáralos con " ; ". Indica en puntoTemario el aspecto concreto del tema afectado.' + LF +
     '- articulos: artículos concretos afectados (ej. "art. 20 ter del Real Decreto 1183/2020"), basándote primero en REFERENCIAS ANTERIORES.' + LF +
     '- accion: MODIFICA, AÑADE, DEROGA o NUEVA NORMA. normasAfectadas: qué norma(s) afecta.' + LF +
     '- cambios: por artículo, redaccionAnterior y redaccionNueva SOLO si el texto del BOE las incluye; si no, "no consta".' + LF +
-    '- importancia: entero de 1 (marginal) a 5 (fundamental para el examen).' + LF +
+    '- importancia: 5 = cambia el núcleo del tema y es imprescindible en la exposición; 4 = hay que mencionarlo seguro; 3 = merece una frase en la exposición; 2 = detalle que no cabría en 13 minutos; 1 = marginal.' + LF +
     '- entradaVigor y regimenTransitorio: según el texto; si no consta, "no consta".' + LF +
     '- NOMBRES DE NORMAS SIN ABREVIATURAS: cada vez que cites una norma (en normasAfectadas, articulos, cambios y cualquier texto) escribe su denominación oficial COMPLETA, con número, fecha y título, tal como aparece en REFERENCIAS ANTERIORES o en el texto (ej. "Real Decreto 396/2006, de 31 de marzo, por el que se establecen las disposiciones mínimas de seguridad y salud aplicables a los trabajos con riesgo de exposición al amianto"). Nunca uses siglas como RD, RDL, LO, LEC, LRJSP o TRLGSS.' + LF +
     '- tipoNumero: rango, número y fecha completos, sin abreviar (ej. "Real Decreto 847/2026, de 21 de octubre").' + LF +

@@ -9,9 +9,12 @@ export function maquetar({ parsed, meta, fechaBoe, emergencia = false }) {
   const esc = (s) => String(s === undefined || s === null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const byId = {};
   for (const m of meta) byId[m.id] = m;
-  const normas = (parsed.normas || []).filter((n) => n.afectaTemario && byId[n.id]);
-  const n = normas.length;
-  const subject = 'BOE ' + fecha + ' – ' + n + (n === 1 ? ' novedad' : ' novedades') + ' del temario';
+  const esSust = (x) => (Number(x.importancia) || 0) >= 3;
+  const todas = (parsed.normas || []).filter((x) => x.afectaTemario && byId[x.id]);
+  const normas = todas.filter(esSust);
+  const menores = todas.filter((x) => !esSust(x)).sort((a, b) => (b.importancia || 0) - (a.importancia || 0));
+  const n = normas.length, nm = menores.length;
+  const subject = 'BOE ' + fecha + ' – ' + (n ? n + (n === 1 ? ' cambio sustancial' : ' cambios sustanciales') : 'sin cambios sustanciales') + (nm ? ' · ' + nm + (nm === 1 ? ' menor' : ' menores') : '');
 
   // ---------- Utilidades de diseño ----------
   const COLORES = {
@@ -88,9 +91,12 @@ export function maquetar({ parsed, meta, fechaBoe, emergencia = false }) {
   let email = '<div style="font-family:Arial,Helvetica,sans-serif;max-width:720px;margin:auto;font-size:15px;line-height:1.45;color:#1f2933">';
   email += '<div style="background:#14284b;color:#ffffff;padding:16px 18px;border-radius:10px 10px 0 0">';
   email += '<div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;opacity:.8">Resumen diario del BOE · Abogados del Estado</div>';
-  email += '<div style="font-size:22px;font-weight:bold;margin-top:4px">' + esc(fecha) + ' · ' + n + (n === 1 ? ' novedad' : ' novedades') + '</div></div>';
+  email += '<div style="font-size:22px;font-weight:bold;margin-top:4px">' + esc(fecha) + ' · ' + (n ? n + (n === 1 ? ' cambio sustancial' : ' cambios sustanciales') : 'sin cambios sustanciales') + '</div></div>';
   email += '<div style="border:1px solid #d9e1ec;border-top:0;border-radius:0 0 10px 10px;padding:6px 16px 14px">';
-  if (!n) email += '<p>Hoy el BOE no contiene novedades que afecten al temario.</p>';
+  const caja = (fondo, borde, txt) => '<div style="margin:12px 0 4px;padding:10px 12px;border-radius:8px;background:' + fondo + ';border:1px solid ' + borde + ';font-weight:bold">' + txt + '</div>';
+  if (!n && !nm) email += '<p>Hoy el BOE no contiene novedades que afecten al temario.</p>';
+  else if (!n) email += caja('#eef1f5', '#8a96a3', 'Hoy no ha habido ninguna modificación sustancial. Debajo tienes los cambios menores y el tema al que afectan.');
+  else email += caja('#e6f4ea', '#34a853', 'Hoy hay ' + n + (n === 1 ? ' cambio sustancial' : ' cambios sustanciales') + ' para el temario' + (nm ? ' (y ' + nm + (nm === 1 ? ' menor' : ' menores') + ' al final).' : '.'));
   let matEmail = '';
   normas.forEach((x, i) => {
     const u = byId[x.id].url;
@@ -105,7 +111,13 @@ export function maquetar({ parsed, meta, fechaBoe, emergencia = false }) {
     email += '<div style="margin-top:6px"><span style="' + lbl + '">Entrada en vigor</span><br>' + esc(x.entradaVigor) + '</div>';
     email += '<div style="margin-top:8px"><a href="' + esc(u) + '" style="color:#1a4f8b;font-weight:bold">Ver en el BOE →</a></div></div>';
   });
-  if (n) email += '<p style="font-size:13px;color:#5a6472;margin:10px 0 0">El desarrollo completo de cada norma va en el PDF adjunto.</p>';
+  if (nm) {
+    email += '<div style="margin:22px 0 0;font-size:12px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;color:#5a6472;border-bottom:2px solid #8a96a3;padding-bottom:3px">Cambios menores (no imprescindibles para la exposición)</div>';
+    menores.forEach((x) => {
+      email += '<div style="padding:8px 2px;border-bottom:1px solid #e3e9f1;font-size:14px"><b>' + esc(nombreCompleto(x)) + '</b> <span style="font-size:11px;color:#5a6472">(' + etiquetaAccion(x.accion) + ')</span><br><span style="color:#5a6472">Tema: ' + esc(x.tema) + (noConsta(x.puntoTemario) ? '' : ' – ' + esc(x.puntoTemario)) + '</span> · <a href="' + esc(byId[x.id].url) + '" style="color:#1a4f8b">BOE →</a></div>';
+    });
+  }
+  if (n || nm) email += '<p style="font-size:13px;color:#5a6472;margin:10px 0 0">El desarrollo completo va en el PDF adjunto.</p>';
   email += '</div></div>';
 
   // ---------- PDF (desarrollo) ----------
@@ -179,7 +191,7 @@ export function maquetar({ parsed, meta, fechaBoe, emergencia = false }) {
   if (emergencia) pdf += '<div class="nota" style="font-size:12px;margin:0 0 16px">Aviso: hoy los modelos principales de Gemini no estaban disponibles (saturados o sin cupo) y este desarrollo lo ha preparado el modelo de emergencia, que es menos fino. Puede que se le haya escapado alguna norma o algún detalle: conviene revisar el sumario del BOE del día.</div>';
 
   if (!n) {
-    pdf += '<div class="vacio">Hoy el BOE no contiene novedades que afecten al temario.</div>';
+    pdf += '<div class="vacio">' + (nm ? 'Hoy no ha habido ninguna modificación sustancial. Al final tienes los cambios menores y el tema al que afectan.' : 'Hoy el BOE no contiene novedades que afecten al temario.') + '</div>';
   } else {
     // Índice
     pdf += '<div class="indice"><h2>Índice del día</h2><table>';
@@ -233,7 +245,14 @@ export function maquetar({ parsed, meta, fechaBoe, emergencia = false }) {
     });
   }
 
+  if (nm) {
+    pdf += '<div class="mat" style="color:#5a6472;border-color:#8a96a3">Cambios menores (no imprescindibles para la exposición)</div>';
+    menores.forEach((x) => {
+      const mm = byId[x.id];
+      pdf += '<div style="padding:8px 0;border-bottom:1px solid #e3e9f1;break-inside:avoid"><div style="margin-bottom:3px">' + badge(x.accion) + '</div><div style="font-weight:700;color:#14284b">' + esc(nombreCompleto(x)) + '</div><div style="color:#5a6472"><b>Tema:</b> ' + esc(x.tema) + (noConsta(x.puntoTemario) ? '' : ' – ' + esc(x.puntoTemario)) + '</div>' + (noConsta(x.queEs) ? '' : '<div>' + esc(x.queEs) + '</div>') + '<span class="url">' + esc(mm.url) + '</span></div>';
+    });
+  }
   pdf += '<div class="pie">Generado automáticamente a partir del BOE del ' + esc(fecha) + '. "No consta" indica que el texto oficial no lo especifica.</div>';
   pdf += '</body></html>';
-  return { subject, emailHtml: email, pdfHtml: pdf, count: n };
+  return { subject, emailHtml: email, pdfHtml: pdf, count: n + nm };
 }
