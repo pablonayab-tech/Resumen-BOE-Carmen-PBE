@@ -18,17 +18,28 @@ import { maquetar } from './plantilla.mjs';
 const RAIZ = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const cfg = JSON.parse(fs.readFileSync(path.join(RAIZ, 'config.json'), 'utf8'));
 cfg.temario = fs.readFileSync(path.join(RAIZ, 'temario.txt'), 'utf8');
-// Los correos vienen de los secretos de GitHub, para que no estén a la vista en el repositorio
-cfg.emailDestino = (process.env.EMAIL_CARMEN || '').trim();
-if (!cfg.emailDestino) {
-  const msg = 'Falta el secreto EMAIL_CARMEN (Settings → Secrets and variables → Actions)';
-  if (process.env.GITHUB_ACTIONS) console.log('::error::' + msg);
-  throw new Error(msg);
+// Los correos vienen de los secretos de GitHub, para que no estén a la vista en el repositorio.
+// Se limpia lo que sobre (comillas, espacios, "mailto:"...) y, si no hay una dirección válida, se explica
+// qué le pasa SIN escribir el contenido del secreto.
+function leerEmail(nombre) {
+  const bruto = String(process.env[nombre] || '');
+  if (!bruto.trim()) return { email: '', problema: 'no existe o está vacío' };
+  const m = bruto.match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/);
+  if (!m) {
+    const pistas = [];
+    if (!bruto.includes('@')) pistas.push('no tiene @');
+    if (/\s/.test(bruto.trim())) pistas.push('tiene espacios en medio');
+    if (/["'<>]/.test(bruto)) pistas.push('tiene comillas o los signos < >');
+    return { email: '', problema: 'no contiene una dirección de correo válida (' + (pistas.join(', ') || 'formato no reconocido') + '; ' + bruto.trim().length + ' caracteres)' };
+  }
+  const aviso = bruto.trim() !== m[0] ? 'tenía caracteres de más alrededor de la dirección (comillas, espacios, puntos...) y se han quitado' : '';
+  return { email: m[0], aviso };
 }
+const CARMEN = leerEmail('EMAIL_CARMEN'), PABLO = leerEmail('EMAIL_PABLO');
+cfg.emailDestino = CARMEN.email;
 // Si falta EMAIL_PABLO, las pruebas y los avisos van al propio Gmail que envía, para no bloquear el envío a Carmen
-cfg.emailPrueba = cfg.emailAvisos = (process.env.EMAIL_PABLO || '').trim() || (process.env.GMAIL_USER || '').trim();
-if (!(process.env.EMAIL_PABLO || '').trim() && process.env.GITHUB_ACTIONS) console.log('::warning::Falta el secreto EMAIL_PABLO: las pruebas y los avisos de error van al Gmail que envía');
-const quien = (to) => (to === cfg.emailDestino ? 'Carmen' : 'Pablo');
+cfg.emailPrueba = cfg.emailAvisos = PABLO.email || (process.env.GMAIL_USER || '').trim();
+const quien = (to) => (to && to === cfg.emailDestino ? 'Carmen' : 'Pablo');
 const ESTADO = path.join(RAIZ, 'estado', 'ultimo_envio.txt');
 const LF = '\n';
 
@@ -257,7 +268,12 @@ async function enviar({ to, subject, html, attachments }) {
       log('Email enviado a ' + quien(to) + ' (' + info.messageId + ')');
       nota('Email enviado a ' + quien(to) + ': ' + subject);
       return;
-    } catch (e) { ultimo = e; log('Fallo al enviar email (intento ' + i + '): ' + e.message); await esperar(5000); }
+    } catch (e) {
+      ultimo = e; log('Fallo al enviar email (intento ' + i + '): ' + e.message);
+      // Dirección inválida (EENVELOPE) o contraseña incorrecta (EAUTH): reintentar no sirve
+      if (e.code === 'EENVELOPE' || e.code === 'EAUTH' || /No recipients/i.test(e.message)) { e.permanente = true; throw e; }
+      await esperar(5000);
+    }
   }
   throw ultimo;
 }
@@ -302,7 +318,7 @@ async function procesar({ fecha, destinatario, aceptarEmergencia = true }) {
   const comprobarModelo = (r, etapa) => {
     if (r.modelo !== EMERGENCIA) return;
     // Si es por cupo agotado, esperar no sirve (el cupo se renueva a las 9:00): se acepta ya
-    if (!aceptarEmergencia && !r.soloCupo) throw new SoloEmergencia('La ' + etapa + ' solo la ha podido hacer el modelo de emergencia (' + EMERGENCIA + ')');
+    if (!aceptarEmergencia && !r.soloCupo) throw new SoloEmergencia((etapa === 'análisis' ? 'El análisis solo lo' : 'La ' + etapa + ' solo la') + ' ha podido hacer el modelo de emergencia (' + EMERGENCIA + ')');
     emergencia = true;
   };
 
@@ -364,6 +380,22 @@ export async function main() {
   const destinatario = modoPrueba ? cfg.emailPrueba : cfg.emailDestino;
   log('BOE ' + fecha + ' · hora Madrid ' + inicio.hora + ' · ' + (programada ? 'programada' : 'manual') + ' · para ' + quien(destinatario));
 
+  // Comprobación de las direcciones (sin mostrar su contenido)
+  if (CARMEN.aviso) nota('EMAIL_CARMEN ' + CARMEN.aviso, 'warning');
+  if (PABLO.aviso) nota('EMAIL_PABLO ' + PABLO.aviso, 'warning');
+  if (!PABLO.email) nota('El secreto EMAIL_PABLO ' + PABLO.problema + ': las pruebas y los avisos de error van al Gmail que envía', 'warning');
+  if (!CARMEN.email) {
+    const msg = 'El secreto EMAIL_CARMEN ' + CARMEN.problema + '. Corrígelo en Settings → Secrets and variables → Actions → EMAIL_CARMEN (lápiz): escribe solo la dirección, sin comillas ni espacios.';
+    nota(msg, modoPrueba ? 'warning' : 'error');
+    if (!modoPrueba) {
+      // Sin dirección de Carmen no tiene sentido preparar nada: se avisa una vez y se para
+      await avisarError(msg, fecha);
+      marcarDia(fecha, programada, modoPrueba);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   // Ejecución manual (pruebas o envíos excepcionales): un solo intento, inmediato.
   if (!programada) {
     try {
@@ -411,6 +443,7 @@ export async function main() {
       }
       ultimoError = e;
       log('ERROR (intento ' + intento + '): ' + (e.stack || e.message));
+      if (e.permanente) { log('Es un error que no se arregla reintentando: se para.'); break; }
     }
     const ahora = ahoraMadrid().minutos;
     if (ahora + cfg.minutosEntreReintentos > limite) break;
@@ -418,7 +451,7 @@ export async function main() {
     await esperar(cfg.minutosEntreReintentos * 60000);
   }
   nota('ERROR: ' + ultimoError.message, 'error');
-  await avisarError(ultimoError.message + '\n\n(Se ha reintentado hasta las ' + cfg.horaLimite + '.)', fecha);
+  await avisarError(ultimoError.message + (ultimoError.permanente ? '\n\n(Error de envío que no se arregla reintentando: revisa los secretos EMAIL_CARMEN, GMAIL_USER y GMAIL_APP_PASSWORD.)' : '\n\n(Se ha reintentado hasta las ' + cfg.horaLimite + '.)'), fecha);
   marcarDia(fecha, programada, modoPrueba); // no se insiste más hoy
   process.exitCode = 1;
 }
